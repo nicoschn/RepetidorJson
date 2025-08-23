@@ -187,7 +187,7 @@ void start_ble_provisioning()
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_sta();
-d
+
     wifi_prov_mgr_config_t config = {
         .scheme = wifi_prov_scheme_ble,
         .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE};
