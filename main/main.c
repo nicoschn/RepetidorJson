@@ -192,12 +192,13 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
     {
+        ESP_LOGI(TAG, "WiFi STA Start: Connecting...");
         esp_wifi_connect();
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED)
     {
+        ESP_LOGI(TAG, "WiFi Disconnected: Reconnecting...");
         esp_wifi_connect();
-        ESP_LOGI(TAG, "Reconnecting to WiFi...");
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
     {
@@ -213,10 +214,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
 void wifi_init_sta(void)
 {
-    // esp_netif_init();
-    // esp_event_loop_create_default();
-    // esp_netif_create_default_wifi_sta();
-
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&cfg);
 
@@ -233,12 +230,18 @@ void wifi_init_sta(void)
                                         NULL,
                                         &instance_got_ip);
 
-    wifi_config_t wifi_config = {
-        .sta = {
-            .ssid = WIFI_SSID,
-            .password = WIFI_PASS,
-        },
-    };
+    wifi_config_t wifi_config = { 0 };
+
+    // Leer credenciales de NVS (guardadas por el provisioning BLE)
+    size_t ssid_len = sizeof(wifi_config.sta.ssid);
+    size_t pass_len = sizeof(wifi_config.sta.password);
+    nvs_handle_t nvs_handle;
+    if (nvs_open("wifi", NVS_READONLY, &nvs_handle) == ESP_OK) {
+        nvs_get_str(nvs_handle, "ssid", (char *)wifi_config.sta.ssid, &ssid_len);
+        nvs_get_str(nvs_handle, "pass", (char *)wifi_config.sta.password, &pass_len);
+        nvs_close(nvs_handle);
+    }
+
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config);
     esp_wifi_start();
