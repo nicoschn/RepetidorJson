@@ -14,17 +14,73 @@
 #include "wifi_provisioning/manager.h"
 #include "wifi_provisioning/scheme_ble.h"
 #include "wifi_provisioning/wifi_config.h"
-
+#include "driver/gpio.h"
 #define WIFI_SSID "EFAISA24"
 #define WIFI_PASS "1q2w3e4r5t6y"
-
-#define BARSTATUS_URL "http://192.168.88.196/api/barstatus"
 
 static const char *TAG = "BARSTATUS";
 
 static char response_buffer[4096];
 static int response_len = 0;
 
+char consulta_url[128] = "http://192.168.88.196/api/barstatus";
+int consulta_intervalo = 5000; // ms
+char etiqueta_json[32] = "ALARMA";
+int rele_gpio = 1;
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#include "esp_http_server.h"
+void rele_init();
+esp_err_t config_post_handler(httpd_req_t *req)
+{
+    char buf[256];
+    int ret = httpd_req_recv(req, buf, MIN(req->content_len, sizeof(buf) - 1));
+    if (ret <= 0)
+        return ESP_FAIL;
+    buf[ret] = 0;
+
+    // Espera formato: url=...&intervalo=...&etiqueta=...&gpio=...
+    sscanf(buf, "url=%127[^&]&intervalo=%d&etiqueta=%31[^&]&gpio=%d", consulta_url, &consulta_intervalo, etiqueta_json, &rele_gpio);
+    rele_init();
+
+    httpd_resp_sendstr(req, "Configuracion actualizada");
+    return ESP_OK;
+}
+
+esp_err_t config_get_handler(httpd_req_t *req)
+{
+    char resp[1024];
+    snprintf(resp, sizeof(resp),
+             "<form method='POST'>"
+             "URL: <input name='url' value='%s'><br>"
+             "Intervalo (ms): <input name='intervalo' value='%d'><br>"
+             "Etiqueta JSON: <input name='etiqueta' value='%s'><br>"
+             "GPIO Rele: <input name='gpio' value='%d'><br>"
+             "<input type='submit'></form>",
+             consulta_url, consulta_intervalo, etiqueta_json, rele_gpio);
+    httpd_resp_sendstr(req, resp);
+    return ESP_OK;
+}
+
+void start_webserver()
+{
+    httpd_handle_t server = NULL;
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    httpd_start(&server, &config);
+
+    httpd_uri_t uri_get = {
+        .uri = "/",
+        .method = HTTP_GET,
+        .handler = config_get_handler,
+        .user_ctx = NULL};
+    httpd_register_uri_handler(server, &uri_get);
+
+    httpd_uri_t uri_post = {
+        .uri = "/",
+        .method = HTTP_POST,
+        .handler = config_post_handler,
+        .user_ctx = NULL};
+    httpd_register_uri_handler(server, &uri_post);
+}
 esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 {
     switch (evt->event_id)
@@ -51,7 +107,7 @@ void fetch_and_log_barstatus(void *pvParameters)
         response_len = 0;
         memset(response_buffer, 0, sizeof(response_buffer));
         esp_http_client_config_t config = {
-            .url = BARSTATUS_URL,
+            .url = consulta_url,
             .timeout_ms = 10000,
             .event_handler = _http_event_handler,
         };
@@ -76,6 +132,13 @@ void fetch_and_log_barstatus(void *pvParameters)
                     cJSON *field = NULL;
                     if (barstatus && cJSON_IsObject(barstatus))
                     {
+                        cJSON *campo = cJSON_GetObjectItem(barstatus, etiqueta_json);
+                        if (campo && cJSON_IsBool(campo))
+                        {
+                            gpio_set_level(rele_gpio, cJSON_IsTrue(campo) ? 1 : 0);
+                            ESP_LOGI(TAG, "Rele %d: %s", rele_gpio, cJSON_IsTrue(campo) ? "ON" : "OFF");
+                        }
+
                         field = cJSON_GetObjectItem(barstatus, "ALARMA");
                         ESP_LOGI(TAG, "ALARMA: %s", cJSON_IsBool(field) ? (cJSON_IsTrue(field) ? "true" : "false") : "N/A");
                         field = cJSON_GetObjectItem(barstatus, "FALLA");
@@ -118,7 +181,7 @@ void fetch_and_log_barstatus(void *pvParameters)
             ESP_LOGE(TAG, "HTTP GET failed: %s", esp_err_to_name(err));
         }
         esp_http_client_cleanup(client);
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(consulta_intervalo));
     }
 }
 
@@ -143,15 +206,16 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         if (barstatus_task_handle == NULL)
         {
             xTaskCreate(&fetch_and_log_barstatus, "fetch_barstatus", 4096 * 2, NULL, 5, &barstatus_task_handle);
+            start_webserver();
         }
     }
 }
 
 void wifi_init_sta(void)
 {
-    esp_netif_init();
-    esp_event_loop_create_default();
-    esp_netif_create_default_wifi_sta();
+    // esp_netif_init();
+    // esp_event_loop_create_default();
+    // esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&cfg);
@@ -182,11 +246,13 @@ void wifi_init_sta(void)
 
 void start_ble_provisioning()
 {
+    // ESP_ERROR_CHECK(esp_netif_init());
+    // ESP_ERROR_CHECK(esp_event_loop_create_default());
+    // esp_netif_create_default_wifi_sta();
 
-    // Inicializa la red y el event loop antes del provisioning
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
+    // Inicializa el driver WiFi antes del provisioning manager
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
     wifi_prov_mgr_config_t config = {
         .scheme = wifi_prov_scheme_ble,
@@ -195,11 +261,18 @@ void start_ble_provisioning()
     ESP_ERROR_CHECK(wifi_prov_mgr_init(config));
 
     wifi_prov_security_t security = WIFI_PROV_SECURITY_1;
-    const char *pop = "abcd1234"; // Cambia el PoP según tu preferencia
+    const char *pop = "abcd1234";
     const char *service_name = "PROV_ESP32";
     const char *service_key = NULL;
 
     ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(security, pop, service_name, service_key));
+}
+
+void rele_init()
+{
+    gpio_pad_select_gpio(rele_gpio);
+    gpio_set_direction(rele_gpio, GPIO_MODE_OUTPUT);
+    gpio_set_level(rele_gpio, 0);
 }
 
 void app_main(void)
@@ -211,6 +284,10 @@ void app_main(void)
         nvs_flash_init();
     }
 
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta(); // Solo aquí
+
     bool provisioned = false;
     wifi_prov_mgr_is_provisioned(&provisioned);
 
@@ -218,6 +295,16 @@ void app_main(void)
     {
         ESP_LOGI(TAG, "Starting BLE provisioning...");
         start_ble_provisioning();
+
+        do
+        {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            wifi_prov_mgr_is_provisioned(&provisioned);
+        } while (!provisioned);
+
+        ESP_LOGI(TAG, "Provisioning finished, deinit and start WiFi STA...");
+        wifi_prov_mgr_deinit();
+        wifi_init_sta();
     }
     else
     {

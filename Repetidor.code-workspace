@@ -6,7 +6,9 @@
 	],
 	"settings": {
 		"files.associations": {
-			"manager.h": "c"
+			"manager.h": "c",
+			"scheme_ble.h": "c",
+			"esp_http_server.h": "c"
 		}
 	}
 }
