@@ -45,6 +45,73 @@ char gpio_activo_tag[MAX_ETIQUETAS][32] = {0}; // Guarda el tag que activó cada
 #include "esp_http_server.h"
 void rele_init();
 void LoadConfig();
+
+#define NUM_ENTRADAS 4
+
+typedef struct
+{
+    int gpio;
+    char post_url[URL_LEN];
+    char post_json[64]; // Por ejemplo: {"cmdACK":{}}
+    int last_state;
+    int trigger_level; // 1 = flanco alto, 0 = flanco bajo
+} entrada_cfg_t;
+
+entrada_cfg_t entradas[NUM_ENTRADAS] = {
+    {17, "http://192.168.1.139/api/cmd", "{\"cmdACK\":{}}", 0, 1},
+    {5, "http://192.168.1.139/api/cmd", "{\"cmdACK\":{}}", 0, 1},
+    {4, "http://192.168.1.139/api/cmd", "{\"cmdACK\":{}}", 0, 1},
+    {16, "http://192.168.1.139/api/cmd", "{\"cmdACK\":{}}", 0, 1}};
+void entradas_init()
+{
+    for (int i = 0; i < NUM_ENTRADAS; i++)
+    {
+        gpio_pad_select_gpio(entradas[i].gpio);
+        gpio_set_direction(entradas[i].gpio, GPIO_MODE_INPUT);
+    }
+}
+void entrada_post(int idx)
+{
+    if (strlen(entradas[idx].post_url) == 0)
+        return; // No hay URL configurada
+
+    esp_http_client_config_t config = {
+        .url = entradas[idx].post_url,
+        .timeout_ms = 5000,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_set_method(client, HTTP_METHOD_POST);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_header(client, "User-Agent", "ESP32");
+    esp_http_client_set_post_field(client, entradas[idx].post_json, strlen(entradas[idx].post_json));
+    esp_err_t err = esp_http_client_perform(client);
+    ESP_LOGI("ENTRADA", "POST a %s: %s", entradas[idx].post_url, esp_err_to_name(err));
+    esp_http_client_cleanup(client);
+}
+void entradas_task(void *pvParameters)
+{
+    while (1)
+    {
+        for (int i = 0; i < NUM_ENTRADAS; i++)
+        {
+            int nivel = gpio_get_level(entradas[i].gpio);
+            // Flanco alto
+            if (entradas[i].trigger_level == 1 && nivel && entradas[i].last_state == 0)
+            {
+                ESP_LOGI("ENTRADA", "GPIO %d: ACTIVADA (flanco alto)", entradas[i].gpio);
+                entrada_post(i);
+            }
+            // Flanco bajo
+            else if (entradas[i].trigger_level == 0 && !nivel && entradas[i].last_state == 1)
+            {
+                ESP_LOGI("ENTRADA", "GPIO %d: ACTIVADA (flanco bajo)", entradas[i].gpio);
+                entrada_post(i);
+            }
+            entradas[i].last_state = nivel;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
 esp_err_t index_html_handler(httpd_req_t *req)
 {
     FILE *f = fopen("/spiffs/index.html", "r");
@@ -66,12 +133,12 @@ esp_err_t index_html_handler(httpd_req_t *req)
 }
 esp_err_t config_post_handler(httpd_req_t *req)
 {
-    char buf[512];
+    char buf[1024];
     int ret = httpd_req_recv(req, buf, MIN(req->content_len, sizeof(buf) - 1));
     if (ret <= 0)
         return ESP_FAIL;
     buf[ret] = 0;
-
+    ESP_LOGI(TAG, "Config POST: %s", buf);
     cJSON *json = cJSON_Parse(buf);
     if (!json)
     {
@@ -82,6 +149,7 @@ esp_err_t config_post_handler(httpd_req_t *req)
     cJSON *jintervalo = cJSON_GetObjectItem(json, "intervalo");
     cJSON *jetiquetas = cJSON_GetObjectItem(json, "etiquetas"); // <-- array de etiquetas
     cJSON *jurls = cJSON_GetObjectItem(json, "urls");           // <-- array de URLs
+    cJSON *jentradas = cJSON_GetObjectItem(json, "entradas");   // <-- array de entradas
 
     if (cJSON_IsNumber(jintervalo) && cJSON_IsArray(jetiquetas) && cJSON_IsArray(jurls))
     {
@@ -121,6 +189,72 @@ esp_err_t config_post_handler(httpd_req_t *req)
             }
         }
 
+        // Entradas
+        if (cJSON_IsArray(jentradas))
+        {
+            int num = MIN(cJSON_GetArraySize(jentradas), NUM_ENTRADAS);
+            for (int i = 0; i < num; i++)
+            {
+                cJSON *item = cJSON_GetArrayItem(jentradas, i);
+                cJSON *jgp = cJSON_GetObjectItem(item, "gpio");
+                cJSON *jurl = cJSON_GetObjectItem(item, "post_url");
+                cJSON *jjson = cJSON_GetObjectItem(item, "post_json");
+                cJSON *jtrig = cJSON_GetObjectItem(item, "trigger_level");
+                if (cJSON_IsNumber(jgp) && cJSON_IsString(jurl) && jjson && cJSON_IsNumber(jtrig))
+                {
+                    entradas[i].gpio = jgp->valueint;
+                    strncpy(entradas[i].post_url, jurl->valuestring, URL_LEN - 1);
+                    entradas[i].post_url[URL_LEN - 1] = 0;
+                    // Acepta string o objeto
+                    if (cJSON_IsString(jjson))
+                    {
+                        strncpy(entradas[i].post_json, jjson->valuestring, sizeof(entradas[i].post_json) - 1);
+                        entradas[i].post_json[sizeof(entradas[i].post_json) - 1] = 0;
+                    }
+                    else if (cJSON_IsObject(jjson) || cJSON_IsArray(jjson))
+                    {
+                        char *tmp = cJSON_PrintUnformatted(jjson);
+                        if (tmp)
+                        {
+                            strncpy(entradas[i].post_json, tmp, sizeof(entradas[i].post_json) - 1);
+                            entradas[i].post_json[sizeof(entradas[i].post_json) - 1] = 0;
+                            free(tmp);
+                        }
+                        else
+                        {
+                            entradas[i].post_json[0] = 0;
+                        }
+                    }
+                    else
+                    {
+                        entradas[i].post_json[0] = 0;
+                    }
+                    entradas[i].trigger_level = jtrig->valueint ? 1 : 0;
+                }
+            }
+            // Guardar en NVS
+            cJSON *arr = cJSON_CreateArray();
+            for (int i = 0; i < NUM_ENTRADAS; i++)
+            {
+                cJSON *obj = cJSON_CreateObject();
+                cJSON_AddNumberToObject(obj, "gpio", entradas[i].gpio);
+                cJSON_AddStringToObject(obj, "post_url", entradas[i].post_url);
+                cJSON_AddStringToObject(obj, "post_json", entradas[i].post_json);
+                cJSON_AddNumberToObject(obj, "trigger_level", entradas[i].trigger_level);
+                cJSON_AddItemToArray(arr, obj);
+            }
+            char *entradas_json = cJSON_PrintUnformatted(arr);
+            nvs_handle_t nvs;
+            if (nvs_open("config", NVS_READWRITE, &nvs) == ESP_OK)
+            {
+                nvs_set_str(nvs, "entradas", entradas_json);
+                nvs_commit(nvs);
+                nvs_close(nvs);
+            }
+            cJSON_Delete(arr);
+            free(entradas_json);
+        }
+
         // Guardar en NVS
         nvs_handle_t nvs;
         if (nvs_open("config", NVS_READWRITE, &nvs) == ESP_OK)
@@ -155,7 +289,6 @@ esp_err_t config_post_handler(httpd_req_t *req)
 
             nvs_commit(nvs);
             nvs_close(nvs);
-    
         }
         httpd_resp_sendstr(req, "Configuracion actualizada");
         // recargar la configuracion en memoria
@@ -190,7 +323,17 @@ esp_err_t config_get_handler(httpd_req_t *req)
         cJSON_AddItemToArray(arr_urls, cJSON_CreateString(consulta_urls[i]));
     }
     cJSON_AddItemToObject(json, "urls", arr_urls);
-
+    cJSON *arr_entradas = cJSON_CreateArray();
+    for (int i = 0; i < NUM_ENTRADAS; i++)
+    {
+        cJSON *obj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(obj, "gpio", entradas[i].gpio);
+        cJSON_AddStringToObject(obj, "post_url", entradas[i].post_url);
+        cJSON_AddStringToObject(obj, "post_json", entradas[i].post_json);
+        cJSON_AddNumberToObject(obj, "trigger_level", entradas[i].trigger_level);
+        cJSON_AddItemToArray(arr_entradas, obj);
+    }
+    cJSON_AddItemToObject(json, "entradas", arr_entradas);
     const char *resp = cJSON_PrintUnformatted(json);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, resp);
@@ -227,7 +370,7 @@ void start_webserver()
     listar_spiffs();
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-
+     config.stack_size = 8192; // <-- Aumenta el stack (por defecto es 4096)
     httpd_start(&server, &config);
 
     // Sirve index.html en "/"
@@ -361,6 +504,7 @@ void fetch_and_log_barstatus(void *pvParameters)
     }
 }
 static TaskHandle_t barstatus_task_handle = NULL;
+static TaskHandle_t entradas_task_handle = NULL;
 
 void rele_init()
 {
@@ -448,6 +592,11 @@ static void event_handler(void *arg, esp_event_base_t event_base,
             xTaskCreate(&fetch_and_log_barstatus, "fetch_barstatus", 4096, NULL, 5, &barstatus_task_handle);
             LoadConfig();
             start_webserver();
+        }
+        if (entradas_task_handle == NULL)
+        {
+            entradas_init();
+            xTaskCreate(&entradas_task, "entradas_task", 4096, NULL, 5, &entradas_task_handle);
         }
         // xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_EVENT);
     }
@@ -728,6 +877,35 @@ void LoadConfig()
             cJSON_Delete(arr);
         }
 
+        // Cargar entradas
+        char entradas_json[512] = {0};
+        size_t len_ent = sizeof(entradas_json);
+        if (nvs_get_str(nvs, "entradas", entradas_json, &len_ent) == ESP_OK)
+        {
+            cJSON *arr = cJSON_Parse(entradas_json);
+            if (arr && cJSON_IsArray(arr))
+            {
+                int num = MIN(cJSON_GetArraySize(arr), NUM_ENTRADAS);
+                for (int i = 0; i < num; i++)
+                {
+                    cJSON *item = cJSON_GetArrayItem(arr, i);
+                    cJSON *jgp = cJSON_GetObjectItem(item, "gpio");
+                    cJSON *jurl = cJSON_GetObjectItem(item, "post_url");
+                    cJSON *jjson = cJSON_GetObjectItem(item, "post_json");
+                    cJSON *jtrig = cJSON_GetObjectItem(item, "trigger_level");
+                    if (cJSON_IsNumber(jgp) && cJSON_IsString(jurl) && cJSON_IsString(jjson) && cJSON_IsNumber(jtrig))
+                    {
+                        entradas[i].gpio = jgp->valueint;
+                        strncpy(entradas[i].post_url, jurl->valuestring, URL_LEN - 1);
+                        entradas[i].post_url[URL_LEN - 1] = 0;
+                        strncpy(entradas[i].post_json, jjson->valuestring, sizeof(entradas[i].post_json) - 1);
+                        entradas[i].post_json[sizeof(entradas[i].post_json) - 1] = 0;
+                        entradas[i].trigger_level = jtrig->valueint ? 1 : 0;
+                    }
+                }
+            }
+            cJSON_Delete(arr);
+        }
         nvs_close(nvs);
         rele_init();
     }

@@ -13,6 +13,7 @@
   "idf.flashType": "UART",
   "files.associations": {
     "manager.h": "c",
-    "cjson.h": "c"
+    "cjson.h": "c",
+    "esp_http_server.h": "c"
   }
 }

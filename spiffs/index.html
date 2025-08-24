@@ -1,19 +1,51 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
     <title>Configuración ESP32</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 2em; }
-        label { display: block; margin-top: 1em; }
-        input[type="text"], input[type="number"] { width: 300px; }
-        button { margin-top: 1em; }
-        #status { margin-top: 1em; color: green; }
-        #error { margin-top: 1em; color: red; }
-        #config { margin-top: 2em; }
-        .etiqueta-row, .url-row { margin-bottom: 0.5em; }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 2em;
+        }
+
+        label {
+            display: block;
+            margin-top: 1em;
+        }
+
+        input[type="text"],
+        input[type="number"] {
+            width: 300px;
+        }
+
+        button {
+            margin-top: 1em;
+        }
+
+        #status {
+            margin-top: 1em;
+            color: green;
+        }
+
+        #error {
+            margin-top: 1em;
+            color: red;
+        }
+
+        #config {
+            margin-top: 2em;
+        }
+
+        .etiqueta-row,
+        .url-row,
+        .entrada-row {
+            margin-bottom: 0.5em;
+        }
     </style>
 </head>
+
 <body>
     <h2>Configuración ESP32</h2>
     <form id="configForm">
@@ -31,6 +63,15 @@
         </div>
         <div id="etiquetasContainer"></div>
         <button type="button" onclick="addEtiqueta()">Agregar etiqueta</button>
+        <h3>Entradas</h3>
+        <div style="display: flex; gap: 10px; font-weight: bold; margin-bottom: 0.5em;">
+            <span style="width: 80px;">GPIO</span>
+            <span style="width: 250px;">POST URL</span>
+            <span style="width: 180px;">POST JSON</span>
+            <span style="width: 120px;">Flanco</span>
+        </div>
+        <div id="entradasContainer"></div>
+        <button type="button" onclick="addEntrada()">Agregar entrada</button>
         <button type="submit">Guardar configuración</button>
     </form>
     <div id="status"></div>
@@ -66,6 +107,33 @@
             container.appendChild(row);
         }
 
+        function addEntrada(gpio = "", post_url = "", post_json = "", trigger_level = 1) {
+            const container = document.getElementById("entradasContainer");
+            const idx = container.children.length;
+            // Si el JSON viene como string con escapes, límpialo
+            if (typeof post_json === "string" && post_json.startsWith("{")) {
+                try {
+                    post_json = JSON.stringify(JSON.parse(post_json));
+                } catch {
+                    // Si no es JSON válido, lo deja tal cual
+                }
+            }
+            if (!post_json) post_json = '{"cmdACK":{}}';
+            const row = document.createElement("div");
+            row.className = "entrada-row";
+            row.innerHTML = `
+                <input type="number" placeholder="GPIO" value="${gpio}" id="entrada_gpio_${idx}" required style="width:80px;">
+                <input type="text" placeholder="POST URL" value="${post_url}" id="entrada_url_${idx}" required style="width:250px;">
+                <input type="text" placeholder="POST JSON" value='${post_json}' id="entrada_json_${idx}" required style="width:180px;">
+                <select id="entrada_flanco_${idx}" style="width:120px;">
+                    <option value="1" ${trigger_level == 1 ? "selected" : ""}>Flanco alto</option>
+                    <option value="0" ${trigger_level == 0 ? "selected" : ""}>Flanco bajo</option>
+                </select>
+                <button type="button" onclick="this.parentElement.remove()">Eliminar</button>
+            `;
+            container.appendChild(row);
+        }
+
         function loadConfig() {
             fetch("/api/config", { method: "GET" })
                 .then(r => r.json())
@@ -84,13 +152,30 @@
                     if (cfg.etiquetas && Array.isArray(cfg.etiquetas)) {
                         cfg.etiquetas.forEach(e => addEtiqueta(e.etiqueta, e.gpio, e.objeto));
                     }
+                    // Entradas
+                    const entradasContainer = document.getElementById("entradasContainer");
+                    entradasContainer.innerHTML = "";
+                    if (cfg.entradas && Array.isArray(cfg.entradas)) {
+                        cfg.entradas.forEach(e => {
+                            let post_json = e.post_json;
+                            // Si viene como string con escapes, límpialo
+                            if (typeof post_json === "string" && post_json.startsWith("{")) {
+                                try {
+                                    post_json = JSON.stringify(JSON.parse(post_json));
+                                } catch {
+                                    // Si no es JSON válido, lo deja tal cual
+                                }
+                            }
+                            addEntrada(e.gpio, e.post_url, post_json, e.trigger_level);
+                        });
+                    }
                 })
                 .catch(() => {
                     document.getElementById("currentConfig").textContent = "No disponible";
                 });
         }
 
-        document.getElementById("configForm").onsubmit = function(e) {
+        document.getElementById("configForm").onsubmit = function (e) {
             e.preventDefault();
             document.getElementById("status").textContent = "";
             document.getElementById("error").textContent = "";
@@ -115,10 +200,26 @@
                 }
             }
 
+            // Entradas
+            const entradas = [];
+            const entradasContainer = document.getElementById("entradasContainer");
+            for (let i = 0; i < entradasContainer.children.length; i++) {
+                const gpio = parseInt(entradasContainer.children[i].querySelector(`input[placeholder="GPIO"]`).value);
+                const post_url = entradasContainer.children[i].querySelector(`input[placeholder="POST URL"]`).value;
+                let post_json = entradasContainer.children[i].querySelector(`input[placeholder="POST JSON"]`).value;
+                const trigger_level = parseInt(entradasContainer.children[i].querySelector(`select`).value);
+
+                // No parsees ni serialices, solo envía como texto
+                if (!isNaN(gpio) && post_url && post_json) {
+                    entradas.push({ gpio, post_url, post_json, trigger_level });
+                }
+            }
+
             const data = {
                 intervalo: parseInt(document.getElementById("intervalo").value),
                 urls: urls,
-                etiquetas: etiquetas
+                etiquetas: etiquetas,
+                entradas: entradas
             };
 
             fetch("/api/config", {
@@ -126,18 +227,18 @@
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(data)
             })
-            .then(r => r.text())
-            .then(resp => {
-                document.getElementById("status").textContent = resp;
-                loadConfig();
-            })
-            .catch(err => {
-                document.getElementById("error").textContent = "Error al guardar configuración";
-            });
+                .then(r => r.text())
+                .then(resp => {
+                    document.getElementById("status").textContent = resp;
+                    loadConfig();
+                })
+                .catch(err => {
+                    document.getElementById("error").textContent = "Error al guardar configuración";
+                });
         };
 
         loadConfig();
     </script>
 </body>
+
 </html>
-``` 
