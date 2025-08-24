@@ -1,32 +1,27 @@
-# _Sample project_
-
-(See the README.md file in the upper level 'examples' directory for more information about examples.)
-
-This is the simplest buildable example. The example is used by command `idf.py create-project`
-that copies the project to user specified path and set it's name. For more information follow the [docs page](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html#start-a-new-project)
+# JSON A SALIDA
 
 
 
-## How to use example
-We encourage the users to use the example as a template for the new projects.
-A recommended way is to follow the instructions on a [docs page](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html#start-a-new-project).
+## DESCRIPCION PINES PLACA COM ELRON
+- IO23	LED FALLA
+- IO22	LED COMUNICACION
+- IO21	LED ALARMA
+- IO19	LED DC
+- IO5		ENTRADA OPTO 4
+- IO17	ENTRADA OPTO 3
+- IO16	ENTRADA OPTO 2
+- IO4		ENTRADA OPTO 1
+- IO0		LED BATERIA
+- IO2 	LED ON
+- IO10	TX
+- IO9		RX
+- IO13	ENABLE 485
+- IO12	RELE_BATERIA
+- IO39	SUPERVISION BATERIA ADC
+- IO36	SUPERVISION TENSION ENTRADA
 
-## Example folder contents
 
-The project **sample_project** contains one source file in C language [main.c](main/main.c). The file is located in folder [main](main).
 
-ESP-IDF projects are built using CMake. The project build configuration is contained in `CMakeLists.txt`
-files that provide set of directives and instructions describing the project's source files and targets
-(executable, library, or both). 
-
-Below is short explanation of remaining files in the project folder.
-
-```
-├── CMakeLists.txt
-├── main
-│   ├── CMakeLists.txt
-│   └── main.c
-└── README.md                  This is the file you are currently reading
-```
-Additionally, the sample project contains Makefile and component.mk files, used for the legacy Make based build system. 
-They are not used or needed when building with CMake and idf.py.
+- IO18 Sirve para entrar en modo configuración por UART.
+  Permite setear el SSID y la password.
+  Después continuar la configuración desde la página web http://x.x.x.x:80
