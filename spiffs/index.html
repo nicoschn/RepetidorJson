@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Configuración ESP32</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2em; }
+        label { display: block; margin-top: 1em; }
+        input[type="text"], input[type="number"] { width: 300px; }
+        button { margin-top: 1em; }
+        #status { margin-top: 1em; color: green; }
+        #error { margin-top: 1em; color: red; }
+        #config { margin-top: 2em; }
+        .etiqueta-row, .url-row { margin-bottom: 0.5em; }
+    </style>
+</head>
+<body>
+    <h2>Configuración ESP32</h2>
+    <form id="configForm">
+        <label>Intervalo (ms):
+            <input type="number" id="intervalo" required>
+        </label>
+        <h3>URLs a consultar</h3>
+        <div id="urlsContainer"></div>
+        <button type="button" onclick="addUrl()">Agregar URL</button>
+        <h3>Etiquetas y GPIOs</h3>
+        <div style="display: flex; gap: 10px; font-weight: bold; margin-bottom: 0.5em;">
+            <span style="width: 150px;">Etiqueta</span>
+            <span style="width: 100px;">GPIO</span>
+            <span style="width: 150px;">Objeto</span>
+        </div>
+        <div id="etiquetasContainer"></div>
+        <button type="button" onclick="addEtiqueta()">Agregar etiqueta</button>
+        <button type="submit">Guardar configuración</button>
+    </form>
+    <div id="status"></div>
+    <div id="error"></div>
+    <div id="config">
+        <h3>Configuración actual:</h3>
+        <pre id="currentConfig"></pre>
+    </div>
+    <script>
+        function addUrl(url = "") {
+            const container = document.getElementById("urlsContainer");
+            const idx = container.children.length;
+            const row = document.createElement("div");
+            row.className = "url-row";
+            row.innerHTML = `
+                <input type="text" placeholder="URL" value="${url}" id="url_${idx}" required>
+                <button type="button" onclick="this.parentElement.remove()">Eliminar</button>
+            `;
+            container.appendChild(row);
+        }
+
+        function addEtiqueta(etiqueta = "", gpio = "", objeto = "") {
+            const container = document.getElementById("etiquetasContainer");
+            const idx = container.children.length;
+            const row = document.createElement("div");
+            row.className = "etiqueta-row";
+            row.innerHTML = `
+                <input type="text" placeholder="Etiqueta" value="${etiqueta}" id="etiqueta_${idx}" required style="width:150px;">
+                <input type="number" placeholder="GPIO" value="${gpio}" id="gpio_${idx}" required style="width:100px;">
+                <input type="text" placeholder="Objeto" value="${objeto}" id="objeto_${idx}" required style="width:150px;">
+                <button type="button" onclick="this.parentElement.remove()">Eliminar</button>
+            `;
+            container.appendChild(row);
+        }
+
+        function loadConfig() {
+            fetch("/api/config", { method: "GET" })
+                .then(r => r.json())
+                .then(cfg => {
+                    document.getElementById("currentConfig").textContent = JSON.stringify(cfg, null, 2);
+                    document.getElementById("intervalo").value = cfg.intervalo || "";
+                    // URLs
+                    const urlsContainer = document.getElementById("urlsContainer");
+                    urlsContainer.innerHTML = "";
+                    if (cfg.urls && Array.isArray(cfg.urls)) {
+                        cfg.urls.forEach(u => addUrl(u));
+                    }
+                    // Etiquetas
+                    const etiquetasContainer = document.getElementById("etiquetasContainer");
+                    etiquetasContainer.innerHTML = "";
+                    if (cfg.etiquetas && Array.isArray(cfg.etiquetas)) {
+                        cfg.etiquetas.forEach(e => addEtiqueta(e.etiqueta, e.gpio, e.objeto));
+                    }
+                })
+                .catch(() => {
+                    document.getElementById("currentConfig").textContent = "No disponible";
+                });
+        }
+
+        document.getElementById("configForm").onsubmit = function(e) {
+            e.preventDefault();
+            document.getElementById("status").textContent = "";
+            document.getElementById("error").textContent = "";
+
+            // URLs
+            const urls = [];
+            const urlsContainer = document.getElementById("urlsContainer");
+            for (let i = 0; i < urlsContainer.children.length; i++) {
+                const url = urlsContainer.children[i].querySelector(`input[type="text"]`).value;
+                if (url) urls.push(url);
+            }
+
+            // Etiquetas
+            const etiquetas = [];
+            const etiquetasContainer = document.getElementById("etiquetasContainer");
+            for (let i = 0; i < etiquetasContainer.children.length; i++) {
+                const et = etiquetasContainer.children[i].querySelector(`input[type="text"][placeholder="Etiqueta"]`).value;
+                const gp = parseInt(etiquetasContainer.children[i].querySelector(`input[type="number"]`).value);
+                const obj = etiquetasContainer.children[i].querySelector(`input[type="text"][placeholder="Objeto"]`).value;
+                if (et && !isNaN(gp) && obj) {
+                    etiquetas.push({ etiqueta: et, gpio: gp, objeto: obj });
+                }
+            }
+
+            const data = {
+                intervalo: parseInt(document.getElementById("intervalo").value),
+                urls: urls,
+                etiquetas: etiquetas
+            };
+
+            fetch("/api/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(data)
+            })
+            .then(r => r.text())
+            .then(resp => {
+                document.getElementById("status").textContent = resp;
+                loadConfig();
+            })
+            .catch(err => {
+                document.getElementById("error").textContent = "Error al guardar configuración";
+            });
+        };
+
+        loadConfig();
+    </script>
+</body>
+</html>
+``` 

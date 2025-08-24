@@ -8,3 +8,4 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(Repetidor)
 
 set(PROJECT_PARTITION_TABLE "partitions.csv")
+spiffs_create_partition_image(storage ./spiffs FLASH_IN_PROJECT)
