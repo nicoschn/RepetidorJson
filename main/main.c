@@ -292,7 +292,10 @@ esp_err_t config_post_handler(httpd_req_t *req)
         }
         httpd_resp_sendstr(req, "Configuracion actualizada");
         // recargar la configuracion en memoria
-        LoadConfig();
+        //LoadConfig();
+        // ESPERO 1 SEGUNDO Y ME REINICIO
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        esp_restart();
     }
     else
     {
@@ -370,7 +373,7 @@ void start_webserver()
     listar_spiffs();
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-     config.stack_size = 8192; // <-- Aumenta el stack (por defecto es 4096)
+    config.stack_size = 8192; // <-- Aumenta el stack (por defecto es 4096)
     httpd_start(&server, &config);
 
     // Sirve index.html en "/"
@@ -521,7 +524,121 @@ void rele_init()
     }
 }
 #include <esp_netif.h>
+bool stop_led_task = true;
+void led_task(void *pvParameter)
+{
 
+    while (1)
+    {
+        if (stop_led_task)
+        {
+            vTaskDelete(NULL); // Delete the task if stop_led_task is true
+            return;
+        }
+        vTaskDelay(10 / portTICK_PERIOD_MS); // Delay to avoid busy waiting
+        static int current_led = 0;
+        static uint32_t last_toggle_time = 0;
+        static bool direction_forward = true; // Control the direction of the effect
+        uint32_t current_time = esp_timer_get_time() / 1000;
+
+        if (current_time - last_toggle_time > 100)
+        { // Change LED every 200ms
+            last_toggle_time = current_time;
+
+            // Turn off all LEDs before changing the current one
+            gpio_set_level(GPIO_NUM_2, 0);  // LED ON
+            gpio_set_level(GPIO_NUM_19, 0); // LED DC
+            gpio_set_level(GPIO_NUM_0, 0);  // LED BATERIA
+            gpio_set_level(GPIO_NUM_21, 0); // LED ALARMA
+            gpio_set_level(GPIO_NUM_22, 0); // LED COMUNICACION
+            gpio_set_level(GPIO_NUM_23, 0); // LED FALLA
+
+            // Turn on the current LED
+            switch (current_led)
+            {
+            case 0:
+                gpio_set_level(GPIO_NUM_2, 1);
+                break; // LED ON
+            case 1:
+                gpio_set_level(GPIO_NUM_19, 1);
+                break; // LED DC
+            case 2:
+                gpio_set_level(GPIO_NUM_0, 1);
+                break; // LED BATERIA
+            case 3:
+                gpio_set_level(GPIO_NUM_21, 1);
+                break; // LED ALARMA
+            case 4:
+                gpio_set_level(GPIO_NUM_22, 1);
+                break; // LED COMUNICACION
+            case 5:
+                gpio_set_level(GPIO_NUM_23, 1);
+                break; // LED FALLA
+            }
+
+            // Update the current LED index based on the direction
+            if (direction_forward)
+            {
+                current_led++;
+                if (current_led > 5)
+                {
+                    current_led = 4; // Reverse direction at the last LED
+                    direction_forward = false;
+                }
+            }
+            else
+            {
+                current_led--;
+                if (current_led < 0)
+                {
+                    current_led = 1; // Reverse direction at the first LED
+                    direction_forward = true;
+                }
+            }
+        }
+    }
+}
+void btn_task(void *arg)
+{
+  ESP_LOGI(TAG, "Init button task...");
+  while (1)
+  {
+    vTaskDelay(pdMS_TO_TICKS(500));
+    if (gpio_get_level(GPIO_NUM_18) == 1)
+    {
+      ESP_LOGI(TAG, "Button pressed, monitoring duration...");
+
+      int seconds_held = 0;
+      bool ten_sec_action_done = false;
+
+      while (gpio_get_level(GPIO_NUM_18) == 1 && seconds_held < 12)
+      {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        seconds_held++;
+        ESP_LOGI(TAG, "Held for %d seconds", seconds_held);
+
+        if (seconds_held == 10 && !ten_sec_action_done)
+        {
+          ESP_LOGI(TAG, "Button held for 10 seconds. Entering provisioning...");
+          wifi_prov_mgr_reset_provisioning();
+      esp_restart();
+
+          ten_sec_action_done = true;
+        }
+      }
+
+      if (seconds_held >= 3 && seconds_held < 10)
+      {
+        ESP_LOGI(TAG, "Button held for 3 seconds. Restarting...");
+        esp_restart();
+      }
+      else if (seconds_held < 3)
+      {
+        ESP_LOGI(TAG, "Button released before 3 seconds.");
+      }
+    }
+  }
+}
 /* Event handler for catching system events */
 static void event_handler(void *arg, esp_event_base_t event_base,
                           int32_t event_id, void *event_data)
@@ -658,7 +775,31 @@ void app_wifi_init(void)
         /* Retry nvs_flash_init */
         ESP_ERROR_CHECK(nvs_flash_init());
     }
+    /*INICIALIZACION DE LEDS DE ESTADO*/
+    // LED BATERIA
+    gpio_set_direction(GPIO_NUM_0, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_0, 0);
 
+    // LED COMUNICACION
+    gpio_set_direction(GPIO_NUM_22, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_22, 0);
+
+    // LED ON
+    gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_2, 0);
+
+    // LED FALLA
+    gpio_set_direction(GPIO_NUM_23, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_23, 0);
+
+    // LED ALARMA
+    gpio_set_direction(GPIO_NUM_21, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_21, 0);
+    // LED DC
+    // BOTON APROV
+    gpio_set_direction(GPIO_NUM_18, GPIO_MODE_INPUT);
+    xTaskCreate(btn_task, "btn_task", 2048, NULL, 10, NULL);
+    gpio_set_level(GPIO_NUM_2, 1);
     /* Initialize TCP/IP */
     ESP_ERROR_CHECK(esp_netif_init());
 
@@ -794,6 +935,17 @@ void app_wifi_init(void)
          * has already been created above.
          */
         wifi_prov_mgr_endpoint_register("custom-data", custom_prov_data_handler, NULL);
+
+        stop_led_task = false;
+        xTaskCreatePinnedToCore(
+            led_task,      // Nombre de la función que implementa la tarea
+            "LED Task",    // Nombre de la tarea (para depuración)
+            2048,          // Tamaño de la pila en palabras
+            NULL,          // Parámetro que se pasa a la tarea
+            5,             // Prioridad de la tarea
+            NULL,          // Handle de la tarea (opcional)
+            tskNO_AFFINITY // Núcleo en el que se ejecutará la tarea (sin afinidad)
+        );
     }
     else
     {
@@ -812,8 +964,10 @@ void app_wifi_init(void)
     // xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, false, true, portMAX_DELAY);
 
     // Eliminar tarea de LEDs
-    // if (provisioned){   }
-    // stop_led_task = true;
+    if (provisioned)
+    {
+        stop_led_task = true;
+    }
 }
 
 void LoadConfig()
