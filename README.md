@@ -25,3 +25,60 @@
 - IO18 Sirve para entrar en modo configuración por UART.
   Permite setear el SSID y la password.
   Después continuar la configuración desde la página web http://x.x.x.x:80
+
+Configuracion base: Remplazar la ip por la de la central.
+Configuración actual:
+{
+  "intervalo": 1500,
+  "etiquetas": [
+    {
+      "etiqueta": "ALARMA",
+      "gpio": 33,
+      "objeto": "barstatus"
+    },
+    {
+      "etiqueta": "FALLA",
+      "gpio": 27,
+      "objeto": "barstatus"
+    },
+    {
+      "etiqueta": "DESCONEXION",
+      "gpio": 32,
+      "objeto": "barstatus"
+    },
+    {
+      "etiqueta": "TEST",
+      "gpio": 14,
+      "objeto": "barstatus"
+    }
+  ],
+  "urls": [
+    "http://192.168.88.196/api/barstatus"
+  ],
+  "entradas": [
+    {
+      "gpio": 17,
+      "post_url": "http://192.168.88.196/api/cmd",
+      "post_json": "{\"cmdReset\":{}}",
+      "trigger_level": 0
+    },
+    {
+      "gpio": 5,
+      "post_url": "http://192.168.88.196/api/cmd",
+      "post_json": "{\"cmdACK\":{}}",
+      "trigger_level": 0
+    },
+    {
+      "gpio": 4,
+      "post_url": "http://192.168.88.196/api/cmd",
+      "post_json": "{\"cmdACK\":{}}",
+      "trigger_level": 0
+    },
+    {
+      "gpio": 16,
+      "post_url": "http://192.168.88.196/api/cmd",
+      "post_json": "{\"cmdACK\":{}}",
+      "trigger_level": 0
+    }
+  ]
+}

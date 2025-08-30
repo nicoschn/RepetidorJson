@@ -38,7 +38,26 @@ typedef struct
     char objeto[32];
 } etiqueta_gpio_t;
 
-etiqueta_gpio_t etiquetas[MAX_ETIQUETAS];
+etiqueta_gpio_t etiquetas[MAX_ETIQUETAS] = {
+    {"ALARMA", GPIO_NUM_33, "barstatus"},
+    {"FALLA", GPIO_NUM_27, "barstatus"},
+    {"DESCONEXION", GPIO_NUM_32, "barstatus"},
+    {"TEST", GPIO_NUM_14, "barstatus"},
+    // Etiquetas no utilizadas
+    {"", -1, ""},
+    {"", -1, ""},
+    {"", -1, ""},
+    {"", -1, ""},
+    {"", -1, ""},
+    {"", -1, ""},
+    {"", -1, ""},
+    {"", -1, ""},
+    {"", -1, ""},
+    {"", -1, ""},
+    {"", -1, ""},
+    {"", -1, ""}
+
+};
 int num_etiquetas = 0;
 char gpio_activo_tag[MAX_ETIQUETAS][32] = {0}; // Guarda el tag que activó cada GPIO
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -62,6 +81,7 @@ entrada_cfg_t entradas[NUM_ENTRADAS] = {
     {5, "http://192.168.1.139/api/cmd", "{\"cmdACK\":{}}", 0, 1},
     {4, "http://192.168.1.139/api/cmd", "{\"cmdACK\":{}}", 0, 1},
     {16, "http://192.168.1.139/api/cmd", "{\"cmdACK\":{}}", 0, 1}};
+
 void entradas_init()
 {
     for (int i = 0; i < NUM_ENTRADAS; i++)
@@ -292,9 +312,9 @@ esp_err_t config_post_handler(httpd_req_t *req)
         }
         httpd_resp_sendstr(req, "Configuracion actualizada");
         // recargar la configuracion en memoria
-        //LoadConfig();
+        // LoadConfig();
         // ESPERO 1 SEGUNDO Y ME REINICIO
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(100));
         esp_restart();
     }
     else
@@ -463,7 +483,7 @@ void fetch_and_log_barstatus(void *pvParameters)
                                     if (valor == 1)
                                     {
                                         // Si se activa, guarda el tag
-                                        gpio_set_level(gpio, 1);
+                                        gpio_set_level(gpio, 0);
                                         strncpy(gpio_activo_tag[i], etiquetas[i].etiqueta, sizeof(gpio_activo_tag[i]) - 1);
                                         gpio_activo_tag[i][sizeof(gpio_activo_tag[i]) - 1] = 0;
                                         ESP_LOGI(TAG, "GPIO %d (%s/%s): ON", gpio, etiquetas[i].objeto, etiquetas[i].etiqueta);
@@ -473,7 +493,7 @@ void fetch_and_log_barstatus(void *pvParameters)
                                         // Solo apaga si el tag que lo activó es el mismo
                                         if (strcmp(gpio_activo_tag[i], etiquetas[i].etiqueta) == 0)
                                         {
-                                            gpio_set_level(gpio, 0);
+                                            gpio_set_level(gpio, 1);
                                             gpio_activo_tag[i][0] = 0; // Limpia el registro
                                             ESP_LOGI(TAG, "GPIO %d (%s/%s): OFF", gpio, etiquetas[i].objeto, etiquetas[i].etiqueta);
                                         }
@@ -520,7 +540,7 @@ void rele_init()
         }
         gpio_pad_select_gpio(etiquetas[i].gpio);
         gpio_set_direction(etiquetas[i].gpio, GPIO_MODE_OUTPUT);
-        gpio_set_level(etiquetas[i].gpio, 0);
+        gpio_set_level(etiquetas[i].gpio, 1);
     }
 }
 #include <esp_netif.h>
@@ -600,44 +620,44 @@ void led_task(void *pvParameter)
 }
 void btn_task(void *arg)
 {
-  ESP_LOGI(TAG, "Init button task...");
-  while (1)
-  {
-    vTaskDelay(pdMS_TO_TICKS(500));
-    if (gpio_get_level(GPIO_NUM_18) == 1)
+    ESP_LOGI(TAG, "Init button task...");
+    while (1)
     {
-      ESP_LOGI(TAG, "Button pressed, monitoring duration...");
-
-      int seconds_held = 0;
-      bool ten_sec_action_done = false;
-
-      while (gpio_get_level(GPIO_NUM_18) == 1 && seconds_held < 12)
-      {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        seconds_held++;
-        ESP_LOGI(TAG, "Held for %d seconds", seconds_held);
-
-        if (seconds_held == 10 && !ten_sec_action_done)
+        vTaskDelay(pdMS_TO_TICKS(500));
+        if (gpio_get_level(GPIO_NUM_18) == 1)
         {
-          ESP_LOGI(TAG, "Button held for 10 seconds. Entering provisioning...");
-          wifi_prov_mgr_reset_provisioning();
-      esp_restart();
+            ESP_LOGI(TAG, "Button pressed, monitoring duration...");
 
-          ten_sec_action_done = true;
+            int seconds_held = 0;
+            bool ten_sec_action_done = false;
+
+            while (gpio_get_level(GPIO_NUM_18) == 1 && seconds_held < 12)
+            {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                seconds_held++;
+                ESP_LOGI(TAG, "Held for %d seconds", seconds_held);
+
+                if (seconds_held == 10 && !ten_sec_action_done)
+                {
+                    ESP_LOGI(TAG, "Button held for 10 seconds. Entering provisioning...");
+                    wifi_prov_mgr_reset_provisioning();
+                    esp_restart();
+
+                    ten_sec_action_done = true;
+                }
+            }
+
+            if (seconds_held >= 3 && seconds_held < 10)
+            {
+                ESP_LOGI(TAG, "Button held for 3 seconds. Restarting...");
+                esp_restart();
+            }
+            else if (seconds_held < 3)
+            {
+                ESP_LOGI(TAG, "Button released before 3 seconds.");
+            }
         }
-      }
-
-      if (seconds_held >= 3 && seconds_held < 10)
-      {
-        ESP_LOGI(TAG, "Button held for 3 seconds. Restarting...");
-        esp_restart();
-      }
-      else if (seconds_held < 3)
-      {
-        ESP_LOGI(TAG, "Button released before 3 seconds.");
-      }
     }
-  }
 }
 /* Event handler for catching system events */
 static void event_handler(void *arg, esp_event_base_t event_base,
@@ -1066,5 +1086,22 @@ void LoadConfig()
 }
 void app_main(void)
 {
+    //33
+    gpio_pad_select_gpio(GPIO_NUM_33);
+    gpio_set_direction(GPIO_NUM_33, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_33, 1);
+    //27
+    gpio_pad_select_gpio(GPIO_NUM_27);
+    gpio_set_direction(GPIO_NUM_27, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_27, 1);
+    //32
+    gpio_pad_select_gpio(GPIO_NUM_32);
+    gpio_set_direction(GPIO_NUM_32, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_32, 1);
+    //14
+    gpio_pad_select_gpio(GPIO_NUM_14);
+    gpio_set_direction(GPIO_NUM_14, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_14, 1);
+
     app_wifi_init();
 }
