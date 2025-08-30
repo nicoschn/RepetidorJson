@@ -15,6 +15,46 @@
 #include "wifi_provisioning/scheme_ble.h"
 #include "wifi_provisioning/wifi_config.h"
 #include "driver/gpio.h"
+#include "esp_timer.h"
+
+// Parpadeo no bloqueante para LEDs
+typedef struct {
+    int gpio;
+    bool blink;
+    uint32_t blink_end_time;
+    uint32_t last_toggle_time;
+    int state;
+} led_blink_t;
+
+#define BLINK_DURATION_MS 500
+#define BLINK_INTERVAL_MS 100
+
+led_blink_t led_falla = {GPIO_NUM_23, false, 0, 0, 0};  // en la practica va a ser com falla
+led_blink_t led_alarm = {GPIO_NUM_21, false, 0, 0, 0}; // en la practica va a ser com ok
+
+void led_blink_tick(led_blink_t *led) {
+    if (!led->blink) return;
+    uint32_t now = esp_timer_get_time() / 1000;
+    if (now >= led->blink_end_time) {
+        gpio_set_level(led->gpio, 0); // Apaga al terminar
+        led->blink = false;
+        led->state = 0;
+        return;
+    }
+    if (now - led->last_toggle_time >= BLINK_INTERVAL_MS) {
+        led->state = !led->state;
+        gpio_set_level(led->gpio, led->state);
+        led->last_toggle_time = now;
+    }
+}
+
+void start_led_blink(led_blink_t *led) {
+    led->blink = true;
+    led->blink_end_time = (esp_timer_get_time() / 1000) + BLINK_DURATION_MS;
+    led->last_toggle_time = esp_timer_get_time() / 1000;
+    led->state = 1;
+    gpio_set_level(led->gpio, 1);
+}
 
 static const char *TAG = "BARSTATUS";
 
@@ -106,6 +146,11 @@ void entrada_post(int idx)
     esp_http_client_set_post_field(client, entradas[idx].post_json, strlen(entradas[idx].post_json));
     esp_err_t err = esp_http_client_perform(client);
     ESP_LOGI("ENTRADA", "POST a %s: %s", entradas[idx].post_url, esp_err_to_name(err));
+    if (err == ESP_OK) {
+        start_led_blink(&led_alarm);
+    } else {
+        start_led_blink(&led_falla);
+    }
     esp_http_client_cleanup(client);
 }
 void entradas_task(void *pvParameters)
@@ -511,19 +556,30 @@ void fetch_and_log_barstatus(void *pvParameters)
                     {
                         ESP_LOGE(TAG, "Failed to parse JSON");
                     }
+                    // Parpadeo LED de comunicación OK
+                    start_led_blink(&led_alarm);
                 }
                 else
                 {
                     ESP_LOGE(TAG, "Empty response or non-200 status");
+                    // Parpadeo LED de falla
+                    start_led_blink(&led_falla);
                 }
             }
             else
             {
                 ESP_LOGE(TAG, "HTTP GET failed: %s", esp_err_to_name(err));
+                // Parpadeo LED de falla
+                start_led_blink(&led_falla);
             }
             esp_http_client_cleanup(client);
         }
-        vTaskDelay(pdMS_TO_TICKS(consulta_intervalo));
+        // Tick de parpadeo no bloqueante
+        for (int t = 0; t < consulta_intervalo / 100; t++) {
+            led_blink_tick(&led_falla);
+            led_blink_tick(&led_alarm);
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
     }
 }
 static TaskHandle_t barstatus_task_handle = NULL;
@@ -795,6 +851,24 @@ void app_wifi_init(void)
         /* Retry nvs_flash_init */
         ESP_ERROR_CHECK(nvs_flash_init());
     }
+    //Reles de salidas
+    //33
+    gpio_pad_select_gpio(GPIO_NUM_33);
+    gpio_set_direction(GPIO_NUM_33, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_33, 1);
+    //27
+    gpio_pad_select_gpio(GPIO_NUM_27);
+    gpio_set_direction(GPIO_NUM_27, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_27, 1);
+    //32
+    gpio_pad_select_gpio(GPIO_NUM_32);
+    gpio_set_direction(GPIO_NUM_32, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_32, 1);
+    //14
+    gpio_pad_select_gpio(GPIO_NUM_14);
+    gpio_set_direction(GPIO_NUM_14, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_14, 1);
+
     /*INICIALIZACION DE LEDS DE ESTADO*/
     // LED BATERIA
     gpio_set_direction(GPIO_NUM_0, GPIO_MODE_OUTPUT);
@@ -1086,22 +1160,7 @@ void LoadConfig()
 }
 void app_main(void)
 {
-    //33
-    gpio_pad_select_gpio(GPIO_NUM_33);
-    gpio_set_direction(GPIO_NUM_33, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_NUM_33, 1);
-    //27
-    gpio_pad_select_gpio(GPIO_NUM_27);
-    gpio_set_direction(GPIO_NUM_27, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_NUM_27, 1);
-    //32
-    gpio_pad_select_gpio(GPIO_NUM_32);
-    gpio_set_direction(GPIO_NUM_32, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_NUM_32, 1);
-    //14
-    gpio_pad_select_gpio(GPIO_NUM_14);
-    gpio_set_direction(GPIO_NUM_14, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_NUM_14, 1);
+
 
     app_wifi_init();
 }
