@@ -79,10 +79,10 @@ typedef struct
 } etiqueta_gpio_t;
 
 etiqueta_gpio_t etiquetas[MAX_ETIQUETAS] = {
-    {"ALARMA", GPIO_NUM_33, "barstatus"},
-    {"FALLA", GPIO_NUM_27, "barstatus"},
-    {"DESCONEXION", GPIO_NUM_32, "barstatus"},
-    {"TEST", GPIO_NUM_14, "barstatus"},
+    {"ALARMA", GPIO_NUM_14, "barstatus"},
+    {"FALLA", GPIO_NUM_32, "barstatus"},
+    {"DESCONEXION", GPIO_NUM_27, "barstatus"},
+    {"TEST", GPIO_NUM_33, "barstatus"},
     // Etiquetas no utilizadas
     {"", -1, ""},
     {"", -1, ""},

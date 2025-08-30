@@ -33,22 +33,22 @@ Configuración actual:
   "etiquetas": [
     {
       "etiqueta": "ALARMA",
-      "gpio": 33,
+      "gpio": 17,
       "objeto": "barstatus"
     },
     {
       "etiqueta": "FALLA",
-      "gpio": 27,
-      "objeto": "barstatus"
-    },
-    {
-      "etiqueta": "DESCONEXION",
       "gpio": 32,
       "objeto": "barstatus"
     },
     {
+      "etiqueta": "DESCONEXION",
+      "gpio": 27,
+      "objeto": "barstatus"
+    },
+    {
       "etiqueta": "TEST",
-      "gpio": 14,
+      "gpio": 33,
       "objeto": "barstatus"
     }
   ],
