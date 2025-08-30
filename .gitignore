@@ -5,6 +5,7 @@ build/
 #sdkconfig
 #sdkconfig.old
 .vscode/*
+.vscode/settings.json
 # Prerequisites
 *.d
 
@@ -37,5 +38,3 @@ build/
 *.exe
 *.out
 *.app
-.vscode/settings.json
-.vscode/settings.json
